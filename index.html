@@ -14,17 +14,20 @@
     <div class="logo-mark">HMI</div>
     <div class="logo-sub">Building Control System</div>
   </div>
-  <div style="display:flex; flex-direction:column; gap:12px;">
-    <button class="login-btn" onclick="loginAs('housekeeping')">
-      <span>Housekeeping</span><span class="arrow">→</span>
+  <form id="loginForm" class="login-form">
+    <div class="login-field">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" required>
+    </div>
+    <div class="login-field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <p id="loginError" class="login-error" role="alert" aria-live="polite"></p>
+    <button class="login-btn" type="submit">
+      <span>Sign In</span><span class="arrow" aria-hidden="true">→</span>
     </button>
-    <button class="login-btn" onclick="loginAs('engineer')">
-      <span>Engineer</span><span class="arrow">→</span>
-    </button>
-    <button class="login-btn" onclick="loginAs('admin')">
-      <span>Admin</span><span class="arrow">→</span>
-    </button>
-  </div>
+  </form>
 </div>
 
 <!-- ════════ APP ════════ -->
@@ -37,6 +40,7 @@
     </div>
     <div class="header-right">
       <span id="roleBadge" class="role-badge"></span>
+      <button id="addRoomBtn" class="btn btn-add-room" onclick="openRoomEditor()">Add Room</button>
       <button id="logoutBtn" onclick="logout()">Logout</button>
     </div>
   </header>

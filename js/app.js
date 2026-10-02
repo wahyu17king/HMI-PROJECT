@@ -19,6 +19,17 @@ for (let f = 1; f <= floorCount; f++) {
     
     rooms.push({
       num, type, floor: f,
+      address: `KNX/${f}/${r}`,
+      feedbackAddress: `KNX/${f}/${r}/status`,
+      ipAddress: `192.168.${f}.${r}`,
+      functions: {
+        dnd: isOccupied && Math.random() > 0.85,
+        mur: isOccupied && Math.random() > 0.9,
+        ac: true,
+        lighting: true,
+        curtains: true,
+        doorLock: true
+      },
       dnd: isOccupied && Math.random() > 0.85,
       mur: isOccupied && Math.random() > 0.9,
       occupied: isOccupied,
@@ -51,6 +62,29 @@ function applyFilters() {
 }
 
 // ── LOGIN / LOGOUT ──
+const loginAccounts = {
+  housekeeping: { username: 'housekeeping', password: 'hk123' },
+  engineer: { username: 'engineer', password: 'eng123' },
+  admin: { username: 'admin', password: 'admin123' }
+};
+
+document.getElementById('loginForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const username = document.getElementById('username').value.trim().toLowerCase();
+  const password = document.getElementById('password').value;
+  const account = Object.entries(loginAccounts).find(([, credentials]) =>
+    credentials.username === username && credentials.password === password
+  );
+
+  if (!account) {
+    document.getElementById('loginError').textContent = 'Username atau password salah.';
+    return;
+  }
+
+  document.getElementById('loginError').textContent = '';
+  loginAs(account[0]);
+});
+
 function loginAs(r) {
   role = r;
   document.getElementById('login').style.display = 'none';
@@ -58,12 +92,16 @@ function loginAs(r) {
   const badge = document.getElementById('roleBadge');
   badge.textContent = r;
   badge.className = 'role-badge role-' + r;
+  const addRoomBtn = document.getElementById('addRoomBtn');
+  addRoomBtn.style.display = (r === 'admin' || r === 'engineer') ? 'inline-flex' : 'none';
   render();
 }
 function logout() {
   role = '';
   document.getElementById('app').style.display = 'none';
   document.getElementById('login').style.display = 'flex';
+  document.getElementById('loginForm').reset();
+  document.getElementById('loginError').textContent = '';
 }
 
 // ── RENDER ──
@@ -119,7 +157,7 @@ function renderGrid() {
     
     let badges = '';
     if (rm.dnd) badges += '<span class="badge badge-dnd">DND</span>';
-    if (rm.mur) badges += '<span class="badge badge-mur">MUR</span>';
+    else if (rm.mur) badges += '<span class="badge badge-mur">MUR</span>';
     badges += rm.occupied ? '<span class="badge badge-occ">Occupied</span>' : '<span class="badge badge-vac">Vacant</span>';
     if (rm.cleaned) badges += '<span class="badge badge-clean">Cleaned</span>';
 
@@ -143,6 +181,8 @@ function renderGrid() {
       info += `<div></div>`;
     }
     
+    info += `<div class="info-item"><div class="info-label">Address</div><div class="info-value">${rm.address || 'Not set'}</div></div>`;
+    info += `<div class="info-item"><div class="info-label">IP</div><div class="info-value">${rm.ipAddress || 'Not set'}</div></div>`;
     if (rm.checkIn) info += `<div class="info-item"><div class="info-label">Check-In</div><div class="info-value">${rm.checkIn}</div></div>`;
     if (rm.checkOut) info += `<div class="info-item"><div class="info-label">Check-Out</div><div class="info-value">${rm.checkOut}</div></div>`;
     info += '</div>';
@@ -161,6 +201,7 @@ function renderGrid() {
       if (rm.occupied && !rm.cleaned) controls += `<button class="btn btn-clean" onclick="markClean(${i})">Mark Cleaned</button>`;
       controls += `<button class="btn btn-ac btn-sm" onclick="toggleDND(${i})">${rm.dnd ? 'DND ON' : 'DND OFF'}</button>`;
       controls += `<button class="btn btn-ac btn-sm" onclick="toggleMUR(${i})">${rm.mur ? 'MUR ON' : 'MUR OFF'}</button>`;
+      controls += `<button class="btn btn-edit" onclick="openRoomEditor(${i})">Edit</button>`;
     }
     controls += '</div>';
 
@@ -195,17 +236,28 @@ function renderGrid() {
 // ── ACTIONS ──
 function markClean(i) {
   rooms[i].cleaned = true;
+  rooms[i].dnd = false;
   rooms[i].mur = false;
   toast(`Room ${rooms[i].num} Marked Cleaned`);
   render();
 }
 function toggleDND(i) {
-  rooms[i].dnd = !rooms[i].dnd;
+  if (rooms[i].dnd) {
+    rooms[i].dnd = false;
+  } else {
+    rooms[i].dnd = true;
+    rooms[i].mur = false;
+  }
   toast(`Room ${rooms[i].num} DND: ${rooms[i].dnd ? 'ON' : 'OFF'}`);
   render();
 }
 function toggleMUR(i) {
-  rooms[i].mur = !rooms[i].mur;
+  if (rooms[i].mur) {
+    rooms[i].mur = false;
+  } else {
+    rooms[i].mur = true;
+    rooms[i].dnd = false;
+  }
   toast(`Room ${rooms[i].num} MUR: ${rooms[i].mur ? 'ON' : 'OFF'}`);
   render();
 }
@@ -216,18 +268,139 @@ function setAC(i, v) {
   setTimeout(() => { rooms[i].acTemp = rooms[i].acSet; render(); }, 1500);
 }
 
+function openRoomEditor(i = null) {
+  if (role !== 'engineer') {
+    toast('Only engineer can manage room KNX address');
+    return;
+  }
+
+  const isEdit = i !== null;
+  const room = isEdit ? rooms[i] : {
+    num: '', floor: 1, type: 'STANDARD', address: '', feedbackAddress: '', ipAddress: '',
+    occupied: false, guest: '', acTemp: 22, acSet: 22, cleaned: true,
+    dnd: false, mur: false, checkIn: '', checkOut: '',
+    functions: { dnd: false, mur: false, ac: true, lighting: true, curtains: true, doorLock: true }
+  };
+
+  document.getElementById('modalTitle').textContent = isEdit ? `Edit Room ${room.num}` : 'Add Room';
+  document.getElementById('modalBody').innerHTML = `
+    <label>Room No</label>
+    <input id="mRoomNo" value="${room.num || ''}" placeholder="101">
+    <label>Floor</label>
+    <input id="mFloor" type="number" min="1" max="12" value="${room.floor || 1}">
+    <label>Room Type</label>
+    <select id="mType">
+      <option value="STANDARD" ${room.type === 'STANDARD' ? 'selected' : ''}>Standard</option>
+      <option value="DELUXE" ${room.type === 'DELUXE' ? 'selected' : ''}>Deluxe</option>
+      <option value="SUITE" ${room.type === 'SUITE' ? 'selected' : ''}>Suite</option>
+      <option value="PRESIDENTIAL" ${room.type === 'PRESIDENTIAL' ? 'selected' : ''}>Presidential</option>
+    </select>
+    <label>KNX Address</label>
+    <input id="mAddress" value="${room.address || ''}" placeholder="KNX/1/10">
+    <label>Feedback KNX Address</label>
+    <input id="mFeedbackAddress" value="${room.feedbackAddress || ''}" placeholder="KNX/1/10/status">
+    <label>IP Address</label>
+    <input id="mIpAddress" value="${room.ipAddress || ''}" placeholder="192.168.1.10">
+    <label>Functions</label>
+    <div class="function-grid">
+      <label><input type="checkbox" id="fnDnd" ${room.functions?.dnd || room.dnd ? 'checked' : ''}> DND</label>
+      <label><input type="checkbox" id="fnMur" ${room.functions?.mur || room.mur ? 'checked' : ''}> MUR</label>
+      <label><input type="checkbox" id="fnAc" ${room.functions?.ac !== false ? 'checked' : ''}> AC</label>
+      <label><input type="checkbox" id="fnLighting" ${room.functions?.lighting !== false ? 'checked' : ''}> Lighting</label>
+      <label><input type="checkbox" id="fnCurtains" ${room.functions?.curtains !== false ? 'checked' : ''}> Curtains</label>
+      <label><input type="checkbox" id="fnDoorLock" ${room.functions?.doorLock !== false ? 'checked' : ''}> Door Lock</label>
+    </div>
+  `;
+
+  document.getElementById('modalOk').onclick = () => {
+    const roomNo = document.getElementById('mRoomNo').value.trim();
+    const floor = parseInt(document.getElementById('mFloor').value || '1', 10);
+    const type = document.getElementById('mType').value;
+    const address = document.getElementById('mAddress').value.trim();
+    const feedbackAddress = document.getElementById('mFeedbackAddress').value.trim();
+    const ipAddress = document.getElementById('mIpAddress').value.trim();
+
+    if (!roomNo) { toast('Room number required'); return; }
+    if (!address) { toast('Address required'); return; }
+
+    const roomData = {
+      num: roomNo,
+      floor: Number.isNaN(floor) ? 1 : floor,
+      type,
+      address,
+      feedbackAddress,
+      ipAddress,
+      occupied: room.occupied || false,
+      guest: room.guest || '',
+      acTemp: room.acTemp || 22,
+      acSet: room.acSet || 22,
+      cleaned: room.cleaned !== undefined ? room.cleaned : true,
+      dnd: room.dnd || false,
+      mur: room.mur || false,
+      checkIn: room.checkIn || '',
+      checkOut: room.checkOut || '',
+      functions: {
+        dnd: document.getElementById('fnDnd').checked,
+        mur: document.getElementById('fnMur').checked,
+        ac: document.getElementById('fnAc').checked,
+        lighting: document.getElementById('fnLighting').checked,
+        curtains: document.getElementById('fnCurtains').checked,
+        doorLock: document.getElementById('fnDoorLock').checked
+      }
+    };
+
+    if (isEdit) {
+      rooms[i] = { ...rooms[i], ...roomData };
+      toast(`Room ${roomNo} updated`);
+    } else {
+      const exists = rooms.some(r => r.num === roomNo);
+      if (exists) { toast('Room number already exists'); return; }
+      rooms.push(roomData);
+      toast(`Room ${roomNo} added`);
+    }
+
+    closeModal();
+    render();
+  };
+
+  document.getElementById('modal').classList.add('show');
+}
+
+function removeRoom(i) {
+  if (role !== 'engineer') {
+    toast('Only engineer can remove rooms');
+    return;
+  }
+  const target = rooms[i];
+  if (!target) return;
+  if (!confirm(`Remove room ${target.num}?`)) return;
+  rooms.splice(i, 1);
+  toast(`Room ${target.num} removed`);
+  render();
+}
+
 function openCheckIn(i) {
-  document.getElementById('modalTitle').textContent = `Check-In — Room ${rooms[i].num} (${rooms[i].type})`;
+  document.getElementById('modalTitle').textContent = `Occupancy — Room ${rooms[i].num} (${rooms[i].type})`;
   document.getElementById('modalBody').innerHTML = `
     <label>Guest Name</label>
-    <input id="mGuest" placeholder="Full name">
+    <input id="mGuest" placeholder="Full name" value="${rooms[i].guest || ''}">
     <label>Check-In Date</label>
-    <input id="mDate" type="date" value="${new Date().toISOString().slice(0,10)}">
+    <input id="mDate" type="date" value="${rooms[i].checkIn || new Date().toISOString().slice(0,10)}">
+    <label>KNX Address</label>
+    <input id="mKnxAddress" value="${rooms[i].address || ''}" placeholder="KNX/room/address" ${role === 'engineer' ? '' : 'readonly'}>
+    <label>Feedback KNX Address</label>
+    <input id="mKnxFeedback" value="${rooms[i].address ? rooms[i].address + '/status' : ''}" placeholder="KNX/status/feedback" ${role === 'engineer' ? '' : 'readonly'}>
   `;
   document.getElementById('modalOk').onclick = () => {
     const g = document.getElementById('mGuest').value.trim();
     const d = document.getElementById('mDate').value;
     if (!g) { toast('Guest Name Required'); return; }
+    if (role === 'engineer') {
+      const knxAddress = document.getElementById('mKnxAddress').value.trim();
+      const knxFeedback = document.getElementById('mKnxFeedback').value.trim();
+      if (knxAddress) rooms[i].address = knxAddress;
+      if (knxFeedback) rooms[i].feedbackAddress = knxFeedback;
+    }
     rooms[i].occupied = true;
     rooms[i].guest = g;
     rooms[i].checkIn = d;
