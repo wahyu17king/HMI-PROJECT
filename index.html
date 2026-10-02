@@ -24,6 +24,7 @@
       <input id="password" name="password" type="password" autocomplete="current-password" required>
     </div>
     <p id="loginError" class="login-error" role="alert" aria-live="polite"></p>
+    <p class="login-security-note">Mode demo: login dan hak akses berjalan di browser, bukan autentikasi server.</p>
     <button class="login-btn" type="submit">
       <span>Sign In</span><span class="arrow" aria-hidden="true">→</span>
     </button>
@@ -40,10 +41,20 @@
     </div>
     <div class="header-right">
       <span id="roleBadge" class="role-badge"></span>
+      <button id="alarmCenterBtn" class="btn btn-alarm" onclick="openAlarmCenter()">Alarms <span id="alarmCount" class="alarm-count">0</span></button>
+      <button id="simulateLinkBtn" class="btn btn-cancel" onclick="simulateLinkDrop()">Demo Link Drop</button>
+      <button id="trendBtn" class="btn" onclick="openTrendExplorer()">Trends</button>
+      <button id="historyBtn" class="btn" onclick="openCommandHistory()">Command History</button>
+      <button id="handoverBtn" class="btn" onclick="openShiftHandover()">Shift Notes</button>
+      <button id="diagnosticsBtn" class="btn" onclick="openDiagnostics()">Diagnostics</button>
+      <button id="exportBtn" class="btn" onclick="exportRoomCsv()">Export CSV</button>
+      <button id="auditLogBtn" class="btn" onclick="openAuditLog()">Security Log</button>
       <button id="addRoomBtn" class="btn btn-add-room" onclick="openRoomEditor()">Add Room</button>
       <button id="logoutBtn" onclick="logout()">Logout</button>
     </div>
   </header>
+
+  <div class="simulation-note">SIMULATED TELEMETRY · NOT CONNECTED TO KNX</div>
   
   <div class="stats" id="stats"></div>
 
@@ -73,6 +84,7 @@
         <option value="DND">DND Active</option>
         <option value="MUR">MUR Active</option>
         <option value="CLEAN">Needs Cleaning</option>
+        <option value="OFFLINE">Controller Offline</option>
       </select>
     </div>
     <div class="filter-group" style="flex:1; min-width:200px;">
@@ -100,5 +112,6 @@
 <div class="toast" id="toast"></div>
 
 <script src="js/app.js"></script>
+<script src="js/features.js"></script>
 </body>
 </html>
