@@ -1,67 +1,37 @@
-function ensureTrendHistory(room) {
-  if (Array.isArray(room.trendHistory) && room.trendHistory.length) return;
-  const now = Date.now();
-  room.trendHistory = Array.from({ length: 168 }, (_, index) => ({
-    timestamp: new Date(now - (167 - index) * 60 * 60 * 1000).toISOString(),
-    value: index === 167
-      ? room.acTemp
-      : Math.round((room.acTemp + Math.sin(index / 11) * 1.2 + (Math.random() - 0.5) * 0.8) * 10) / 10
-  }));
-}
+// ── Operational features: trends, history, handover, diagnostics, export, alarms, audit ──
+'use strict';
+
+const TREND_SERIES_COLOR = '#64d3ff';
+const TREND_AXIS_COLOR = 'rgba(255,255,255,0.12)';
+const TREND_LABEL_COLOR = '#9bb0cc';
+const ALARM_PRIORITIES = ['critical', 'high', 'medium', 'low'];
 
 function openTrendExplorer(roomIndex = 0) {
-  if (!requireRole(['admin', 'engineer', 'housekeeping'])) return;
+  if (!requireRole(ROLE_ACCESS.features)) return;
   const room = rooms[roomIndex] || rooms[0];
-  document.getElementById('modalTitle').textContent = 'Temperature Trends';
-  document.getElementById('modalBody').className = 'feature-panel';
-  document.getElementById('modalBody').innerHTML = `
-    <div class="feature-toolbar">
-      <label for="trendRoomNumber">Room</label>
-      <input id="trendRoomNumber" type="number" value="${escapeHTML(room.num)}" aria-label="Room number">
-      <label for="trendPeriod">Period</label>
-      <select id="trendPeriod"><option value="24h">24 hours</option><option value="7d">7 days</option></select>
-      <button class="btn btn-ac" type="button" onclick="renderTrendChart()">Show</button>
-    </div>
-    <canvas id="trendChart" class="trend-chart" role="img" aria-label="Room temperature trend chart"></canvas>
-    <div id="trendSummary" class="trend-summary" role="status"></div>
-  `;
-  document.getElementById('modalOk').hidden = true;
-  document.getElementById('modal').classList.add('show');
+  openModal({
+    title: 'Temperature Trends',
+    panelClass: 'feature-panel',
+    bodyHtml: `
+      <div class="feature-toolbar">
+        <label for="trendRoomNumber">Room</label>
+        <input id="trendRoomNumber" type="number" value="${escapeHTML(room.num)}" aria-label="Room number">
+        <label for="trendPeriod">Period</label>
+        <select id="trendPeriod"><option value="24h">24 hours</option><option value="7d">7 days</option></select>
+        <button class="btn btn-ac" type="button" onclick="renderTrendChart()">Show</button>
+      </div>
+      <canvas id="trendChart" class="trend-chart" role="img" aria-label="Room temperature trend chart"></canvas>
+      <div id="trendSummary" class="trend-summary" role="status"></div>
+    `
+  });
   renderTrendChart();
 }
 
-function renderTrendChart() {
-  const roomNumber = document.getElementById('trendRoomNumber')?.value.trim();
-  const room = rooms.find((item) => item.num === roomNumber);
-  const canvas = document.getElementById('trendChart');
-  const summary = document.getElementById('trendSummary');
-  if (!canvas || !summary) return;
-  if (!room) {
-    summary.textContent = 'Room not found.';
-    return;
-  }
-
-  ensureTrendHistory(room);
-  const period = document.getElementById('trendPeriod').value;
-  const readings = period === '24h' ? room.trendHistory.slice(-24) : room.trendHistory.slice(-168);
-  const values = readings.map((reading) => reading.value);
-  const width = Math.max(canvas.clientWidth, 280);
-  const height = 250;
-  const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.round(width * ratio);
-  canvas.height = Math.round(height * ratio);
-  const context = canvas.getContext('2d');
-  context.setTransform(ratio, 0, 0, ratio, 0, 0);
-  context.clearRect(0, 0, width, height);
-
-  const padding = { top: 18, right: 14, bottom: 32, left: 42 };
-  const chartWidth = width - padding.left - padding.right;
-  const chartHeight = height - padding.top - padding.bottom;
-  const minimum = Math.floor(Math.min(...values) - 1);
-  const maximum = Math.ceil(Math.max(...values) + 1);
-  context.font = '11px Segoe UI, sans-serif';
-  context.strokeStyle = 'rgba(255,255,255,0.12)';
-  context.fillStyle = '#9bb0cc';
+function drawTrendAxes(context, bounds, geometry) {
+  const { width, padding, chartHeight } = geometry;
+  const { minimum, maximum } = bounds;
+  context.strokeStyle = TREND_AXIS_COLOR;
+  context.fillStyle = TREND_LABEL_COLOR;
   context.lineWidth = 1;
 
   for (let line = 0; line <= 4; line++) {
@@ -73,8 +43,12 @@ function renderTrendChart() {
     context.stroke();
     context.fillText(`${value.toFixed(0)}°`, 4, y + 4);
   }
+}
 
-  context.strokeStyle = '#64d3ff';
+function drawTrendLine(context, readings, bounds, geometry) {
+  const { padding, chartWidth, chartHeight } = geometry;
+  const { minimum, maximum } = bounds;
+  context.strokeStyle = TREND_SERIES_COLOR;
   context.lineWidth = 2;
   context.beginPath();
   readings.forEach((reading, index) => {
@@ -84,36 +58,82 @@ function renderTrendChart() {
     else context.lineTo(x, y);
   });
   context.stroke();
+}
 
-  const start = new Date(readings[0].timestamp);
-  const end = new Date(readings[readings.length - 1].timestamp);
-  context.fillStyle = '#9bb0cc';
-  context.fillText(start.toLocaleString(), padding.left, height - 8);
-  const endLabel = end.toLocaleString();
-  context.fillText(endLabel, Math.max(padding.left, width - padding.right - context.measureText(endLabel).width), height - 8);
+function drawTrendTimeRange(context, readings, geometry) {
+  const { width, height, padding } = geometry;
+  const start = new Date(readings[0].timestamp).toLocaleString();
+  const end = new Date(readings[readings.length - 1].timestamp).toLocaleString();
+  context.fillStyle = TREND_LABEL_COLOR;
+  context.fillText(start, padding.left, height - 8);
+  context.fillText(end, Math.max(padding.left, width - padding.right - context.measureText(end).width), height - 8);
+}
+
+function renderTrendChart() {
+  const roomNumber = dom.byId('trendRoomNumber')?.value.trim();
+  const room = rooms.find((item) => item.num === roomNumber);
+  const canvas = dom.byId('trendChart');
+  const summary = dom.byId('trendSummary');
+  if (!canvas || !summary) return;
+  if (!room) {
+    summary.textContent = 'Room not found.';
+    return;
+  }
+
+  ensureTrendHistory(room);
+  const period = dom.byId('trendPeriod').value;
+  const readings = period === '24h' ? room.trendHistory.slice(-24) : room.trendHistory.slice(-CONFIG.trendHours);
+  const values = readings.map((reading) => reading.value);
+  const width = Math.max(canvas.clientWidth, 280);
+  const height = 250;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  const context = canvas.getContext('2d');
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, width, height);
+
+  const padding = { top: 18, right: 14, bottom: 32, left: 42 };
+  const geometry = {
+    width,
+    height,
+    padding,
+    chartWidth: width - padding.left - padding.right,
+    chartHeight: height - padding.top - padding.bottom
+  };
+  const bounds = {
+    minimum: Math.floor(Math.min(...values) - 1),
+    maximum: Math.ceil(Math.max(...values) + 1)
+  };
+
+  context.font = '11px Segoe UI, sans-serif';
+  drawTrendAxes(context, bounds, geometry);
+  drawTrendLine(context, readings, bounds, geometry);
+  drawTrendTimeRange(context, readings, geometry);
+
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
   summary.textContent = `Room ${room.num} · ${period} · Min ${Math.min(...values).toFixed(1)}°C · Avg ${average.toFixed(1)}°C · Max ${Math.max(...values).toFixed(1)}°C`;
 }
 
 function openCommandHistory() {
-  if (!requireRole(['admin', 'engineer', 'housekeeping'])) return;
-  document.getElementById('modalTitle').textContent = 'Command History';
-  document.getElementById('modalBody').className = 'feature-panel';
-  document.getElementById('modalBody').innerHTML = `
-    <label for="historyRoomNumber">Filter by room</label>
-    <input id="historyRoomNumber" type="search" placeholder="All rooms">
-    <div id="commandHistoryList" class="history-list"></div>
-  `;
-  document.getElementById('modalOk').hidden = true;
-  document.getElementById('modal').classList.add('show');
-  document.getElementById('historyRoomNumber').addEventListener('input', renderCommandHistory);
+  if (!requireRole(ROLE_ACCESS.features)) return;
+  openModal({
+    title: 'Command History',
+    panelClass: 'feature-panel',
+    bodyHtml: `
+      <label for="historyRoomNumber">Filter by room</label>
+      <input id="historyRoomNumber" type="search" placeholder="All rooms">
+      <div id="commandHistoryList" class="history-list"></div>
+    `
+  });
+  dom.byId('historyRoomNumber').addEventListener('input', renderCommandHistory);
   renderCommandHistory();
 }
 
 function renderCommandHistory() {
-  const list = document.getElementById('commandHistoryList');
+  const list = dom.byId('commandHistoryList');
   if (!list) return;
-  const roomFilter = document.getElementById('historyRoomNumber').value.trim().toLowerCase();
+  const roomFilter = dom.byId('historyRoomNumber').value.trim().toLowerCase();
   const entries = commandHistory
     .filter((entry) => !roomFilter || String(entry.roomNum).toLowerCase().includes(roomFilter))
     .slice(0, 100);
@@ -126,29 +146,27 @@ function renderCommandHistory() {
 }
 
 function openShiftHandover() {
-  if (!requireRole(['admin', 'engineer', 'housekeeping'])) return;
-  document.getElementById('modalTitle').textContent = 'Shift Handover';
-  document.getElementById('modalBody').className = 'feature-panel';
-  document.getElementById('modalBody').innerHTML = `
-    <label for="handoverShift">Shift</label>
-    <select id="handoverShift"><option>Day</option><option>Evening</option><option>Night</option></select>
-    <label for="handoverOperator">Operator</label>
-    <input id="handoverOperator" value="${escapeHTML(role)}" maxlength="40">
-    <label for="handoverNote">Handover note</label>
-    <textarea id="handoverNote" rows="4" maxlength="1000" placeholder="Outstanding alarms, work in progress, follow-up..."></textarea>
-    <h4>Recent Notes</h4>
-    <div id="shiftNoteList" class="history-list"></div>
-  `;
-  const confirmButton = document.getElementById('modalOk');
-  confirmButton.hidden = false;
-  confirmButton.textContent = 'Save Note';
-  confirmButton.onclick = saveShiftNote;
-  document.getElementById('modal').classList.add('show');
+  if (!requireRole(ROLE_ACCESS.features)) return;
+  openModal({
+    title: 'Shift Handover',
+    panelClass: 'feature-panel',
+    bodyHtml: `
+      <label for="handoverShift">Shift</label>
+      <select id="handoverShift"><option>Day</option><option>Evening</option><option>Night</option></select>
+      <label for="handoverOperator">Operator</label>
+      <input id="handoverOperator" value="${escapeHTML(state.role)}" maxlength="40">
+      <label for="handoverNote">Handover note</label>
+      <textarea id="handoverNote" rows="4" maxlength="1000" placeholder="Outstanding alarms, work in progress, follow-up..."></textarea>
+      <h4>Recent Notes</h4>
+      <div id="shiftNoteList" class="history-list"></div>
+    `,
+    confirmButton: { label: 'Save Note', onClick: saveShiftNote }
+  });
   renderShiftNotes();
 }
 
 function renderShiftNotes() {
-  const list = document.getElementById('shiftNoteList');
+  const list = dom.byId('shiftNoteList');
   if (!list) return;
   list.innerHTML = shiftNotes.slice(0, 20).map((entry) => `
     <div class="history-entry">
@@ -160,57 +178,64 @@ function renderShiftNotes() {
 }
 
 function saveShiftNote() {
-  if (!requireRole(['admin', 'engineer', 'housekeeping'])) return;
-  const note = document.getElementById('handoverNote').value.trim();
+  if (!requireRole(ROLE_ACCESS.features)) return;
+  const note = dom.byId('handoverNote').value.trim();
   if (!note) {
     toast('Enter a handover note first.');
     return;
   }
   shiftNotes.unshift({
     timestamp: new Date().toISOString(),
-    shift: document.getElementById('handoverShift').value,
-    operator: document.getElementById('handoverOperator').value.trim() || role,
-    role,
+    shift: dom.byId('handoverShift').value,
+    operator: dom.byId('handoverOperator').value.trim() || state.role,
+    role: state.role,
     note
   });
-  shiftNotes.splice(100);
-  persistLocalRecords(SHIFT_NOTES_STORAGE_KEY, shiftNotes);
-  recordAudit('shift_handover_added', role);
+  shiftNotes.splice(CONFIG.shiftNotesLimit);
+  persistLocalRecords(CONFIG.storageKeys.shiftNotes, shiftNotes);
+  recordAudit('shift_handover_added', state.role);
   closeModal();
   toast('Shift note saved on this browser.');
 }
 
 function openDiagnostics() {
-  if (!requireRole(['admin', 'engineer', 'housekeeping'])) return;
+  if (!requireRole(ROLE_ACCESS.features)) return;
   const onlineRooms = rooms.filter((room) => room.online);
   const offlineRooms = rooms.filter((room) => !room.online);
   const latencies = onlineRooms.map((room) => room.responseMs).filter(Number.isFinite);
-  const averageLatency = latencies.length ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length) : 0;
+  const averageLatency = latencies.length
+    ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
+    : 0;
   const disconnects = rooms.reduce((sum, room) => sum + (room.disconnectCount || 0), 0);
-  const slowRooms = onlineRooms.filter((room) => room.responseMs >= 250).sort((a, b) => b.responseMs - a.responseMs).slice(0, 10);
+  const slowRooms = onlineRooms
+    .filter((room) => room.responseMs >= CONFIG.slowResponseThresholdMs)
+    .sort((a, b) => b.responseMs - a.responseMs)
+    .slice(0, 10);
+
   const offlineRows = offlineRooms.slice(0, 20).map((room) => `
     <div class="diagnostic-row"><strong>Room ${escapeHTML(room.num)}</strong><span>OFFLINE</span><span>Last seen ${escapeHTML(new Date(room.lastSeenAt).toLocaleString())}</span></div>
   `).join('');
   const slowRows = slowRooms.map((room) => `
     <div class="diagnostic-row"><strong>Room ${escapeHTML(room.num)}</strong><span>${escapeHTML(room.responseMs)} ms</span><span>Online</span></div>
   `).join('');
-  document.getElementById('modalTitle').textContent = 'Device Diagnostics';
-  document.getElementById('modalBody').className = 'feature-panel diagnostics-panel';
-  document.getElementById('modalBody').innerHTML = `
-    <div class="diagnostic-summary">
-      <div><strong>${onlineRooms.length}</strong><span>Online</span></div>
-      <div><strong>${offlineRooms.length}</strong><span>Offline</span></div>
-      <div><strong>${averageLatency} ms</strong><span>Avg response</span></div>
-      <div><strong>${disconnects}</strong><span>Link drops</span></div>
-    </div>
-    <p class="simulation-note">SIMULATED DIAGNOSTICS · NOT LIVE DEVICE MEASUREMENTS</p>
-    <h4>Offline controllers</h4>
-    <div class="diagnostics-list">${offlineRows || '<p>All demo controllers are online.</p>'}</div>
-    <h4>Slow responses (&gt; 250 ms)</h4>
-    <div class="diagnostics-list">${slowRows || '<p>No slow demo responses.</p>'}</div>
-  `;
-  document.getElementById('modalOk').hidden = true;
-  document.getElementById('modal').classList.add('show');
+
+  openModal({
+    title: 'Device Diagnostics',
+    panelClass: 'feature-panel diagnostics-panel',
+    bodyHtml: `
+      <div class="diagnostic-summary">
+        <div><strong>${onlineRooms.length}</strong><span>Online</span></div>
+        <div><strong>${offlineRooms.length}</strong><span>Offline</span></div>
+        <div><strong>${averageLatency} ms</strong><span>Avg response</span></div>
+        <div><strong>${disconnects}</strong><span>Link drops</span></div>
+      </div>
+      <p class="simulation-note">SIMULATED DIAGNOSTICS · NOT LIVE DEVICE MEASUREMENTS</p>
+      <h4>Offline controllers</h4>
+      <div class="diagnostics-list">${offlineRows || '<p>All demo controllers are online.</p>'}</div>
+      <h4>Slow responses (&gt; ${CONFIG.slowResponseThresholdMs} ms)</h4>
+      <div class="diagnostics-list">${slowRows || '<p>No slow demo responses.</p>'}</div>
+    `
+  });
 }
 
 function csvCell(value) {
@@ -230,9 +255,8 @@ function buildRoomCsv() {
 }
 
 function exportRoomCsv() {
-  if (!requireRole(['admin', 'engineer'])) return;
-  const csv = buildRoomCsv();
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  if (!requireRole(ROLE_ACCESS.export)) return;
+  const url = URL.createObjectURL(new Blob([buildRoomCsv()], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
   link.download = `hmi-room-status-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -242,14 +266,42 @@ function exportRoomCsv() {
   toast('Room status CSV exported.');
 }
 
+function alarmPriorityLabel(priority) {
+  return priority.charAt(0).toUpperCase() + priority.slice(1);
+}
+
+function openAlarmCenter() {
+  if (!requireRole(ROLE_ACCESS.alarmCenter)) return;
+  const activeAlarms = alarms.filter((alarm) => !alarm.resolvedAt);
+  const priorityOptions = ALARM_PRIORITIES
+    .map((priority) => `<option value="${priority}">${alarmPriorityLabel(priority)}</option>`)
+    .join('');
+  openModal({
+    title: `Alarm Center · ${activeAlarms.length}`,
+    panelClass: 'alarm-center',
+    bodyHtml: `
+      <div class="alarm-toolbar">
+        <label for="alarmPriorityFilter">Priority</label>
+        <select id="alarmPriorityFilter" onchange="renderAlarmEntries()">
+          <option value="ALL">All priorities</option>
+          ${priorityOptions}
+        </select>
+      </div>
+      <div id="alarmEntries" class="alarm-list"></div>
+    `
+  });
+  renderAlarmEntries();
+}
+
 function renderAlarmEntries() {
-  const target = document.getElementById('alarmEntries');
+  const target = dom.byId('alarmEntries');
   if (!target) return;
-  const filter = document.getElementById('alarmPriorityFilter').value;
-  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  const filter = dom.byId('alarmPriorityFilter').value;
+  const priorityOrder = Object.fromEntries(ALARM_PRIORITIES.map((priority, index) => [priority, index]));
   const visibleAlarms = alarms
     .filter((alarm) => !alarm.resolvedAt && (filter === 'ALL' || alarm.priority === filter))
     .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || new Date(b.createdAt) - new Date(a.createdAt));
+
   target.innerHTML = visibleAlarms.map((alarm) => `
     <div class="alarm-entry">
       <div>
@@ -258,9 +310,37 @@ function renderAlarmEntries() {
       </div>
       ${alarm.acknowledged
         ? '<span class="alarm-acknowledged">Acknowledged</span>'
-        : ['admin', 'engineer'].includes(role)
+        : ROLE_ACCESS.acknowledgeAlarm.includes(state.role)
           ? `<button class="btn btn-cancel" onclick="acknowledgeAlarm(${alarm.id})">Acknowledge</button>`
           : '<span class="alarm-entry-meta">Requires engineer/admin</span>'}
     </div>
   `).join('') || '<p>No active alarms for this priority.</p>';
+}
+
+function acknowledgeAlarm(id) {
+  if (!requireRole(ROLE_ACCESS.acknowledgeAlarm)) return;
+  const alarm = alarms.find((item) => item.id === id && !item.resolvedAt);
+  if (!alarm || alarm.acknowledged) return;
+  alarm.acknowledged = true;
+  recordAudit('alarm_acknowledged', `${alarm.roomNum}: ${alarm.type}`);
+  updateAlarmCount();
+  openAlarmCenter();
+}
+
+function openAuditLog() {
+  if (!requireRole(ROLE_ACCESS.auditLog)) return;
+  const entries = auditEvents.map((event) => `
+    <div class="audit-entry">
+      <div class="audit-entry-header">
+        <strong>${escapeHTML(event.action)}</strong>
+        <span>${escapeHTML(event.role)}</span>
+      </div>
+      <div class="audit-entry-details">${escapeHTML(new Date(event.timestamp).toLocaleString())}${event.details ? ` · ${escapeHTML(event.details)}` : ''}</div>
+    </div>
+  `).join('');
+  openModal({
+    title: 'Security Audit Log',
+    panelClass: 'audit-list',
+    bodyHtml: entries || '<p>No security events recorded.</p>'
+  });
 }
