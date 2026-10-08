@@ -813,3 +813,13 @@ header {
   .diagnostic-row { grid-template-columns: 1fr auto; }
   .diagnostic-row span:last-child { grid-column: 1 / -1; }
 }
+
+.empty-grid {
+  grid-column: 1 / -1;
+  padding: 60px;
+  text-align: center;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-size: 12px;
+}
